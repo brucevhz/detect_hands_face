@@ -168,7 +168,7 @@ function stopDetection() {
     clearInterval(faceDetectionInterval);
     clearInterval(handDetectionInterval);
     
-    ctxHands.clearRect(0, 0, canvasHands.width, canvasHands.height);
+    ctxHands.clearRect( 0, 0, canvasHands.width, canvasHands.height);
     emotionResult.textContent = '-';
     fingersResult.textContent = '-';
     traitsResult.textContent = '-';
@@ -213,10 +213,11 @@ function processHands(results) {
         results.multiHandLandmarks.forEach((landmarks, i) => {
             drawHandLandmarks(landmarks);
             
-            const handedness = results.multiHandedness[i]?.label || 'Desconocida';
+            const handedness = results.multiHandedness[i]?.label || 'Unknown';
             const handType = handedness === 'Right' ? 'Derecha' : 'Izquierda';
-            const fingersUp = countFingers(landmarks);
             
+            // Pasar la información de lateralidad al contador de dedos
+            const fingersUp = countFingers(landmarks, handedness);
             fingersCounts.push(`${fingersUp} (${handType})`);
         });
         
@@ -272,25 +273,55 @@ function drawHandLandmarks(landmarks) {
     });
 }
 
-// 6. Contador de dedos mejorado
-function countFingers(landmarks) {
-    const fingerTips = [4, 8, 12, 16, 20];
-    const fingerBases = [3, 6, 10, 14, 18];
+// 6. ALGORITMO DE DETECCIÓN DE DEDOS MEJORADO (PRECISO PARA PULGARES)
+function countFingers(landmarks, handedness) {
+    // Definición de puntos clave
+    const fingerTips = [4, 8, 12, 16, 20]; // Pulgar, índice, medio, anular, meñique
+    const fingerJoints = [3, 6, 10, 14, 18]; // Articulaciones base (IP para pulgar, PIP para otros)
     
     let count = 0;
     
-    // Dedos normales (índice a meñique)
+    // Detección para dedos largos (índice a meñique)
     for (let i = 1; i <= 4; i++) {
-        if (landmarks[fingerTips[i]].y < landmarks[fingerBases[i]].y) {
+        const tip = landmarks[fingerTips[i]];
+        const joint = landmarks[fingerJoints[i]];
+        
+        // Verificar si la punta del dedo está sobre la articulación
+        if (tip.y < joint.y) {
             count++;
         }
     }
     
-    // Pulgar (cálculo especial)
-    const thumbDirection = landmarks[2].x - landmarks[3].x;
-    const thumbPosition = landmarks[4].x - landmarks[3].x;
+    // DETECCIÓN DE PULGAR MEJORADA (PRECISA PARA PUÑO CERRADO)
+    const thumbTip = landmarks[4];
+    const thumbIP = landmarks[3]; // Articulación interfalángica
+    const thumbMCP = landmarks[2]; // Articulación metacarpofalángica
+    const thumbCMC = landmarks[1]; // Articulación carpometacarpiana
     
-    if (Math.sign(thumbDirection) === Math.sign(thumbPosition)) {
+    // 1. Verificación de la posición vertical
+    const isThumbAboveIP = thumbTip.y < thumbIP.y;
+    
+    // 2. Verificación de la posición horizontal
+    const isThumbExtended = handedness === 'Right' 
+        ? thumbTip.x < thumbMCP.x 
+        : thumbTip.x > thumbMCP.x;
+    
+    // 3. Verificación de la distancia desde la base
+    const distanceTipToCMC = Math.sqrt(
+        Math.pow(thumbTip.x - thumbCMC.x, 2) + 
+        Math.pow(thumbTip.y - thumbCMC.y, 2)
+    );
+    
+    const distanceIPToCMC = Math.sqrt(
+        Math.pow(thumbIP.x - thumbCMC.x, 2) + 
+        Math.pow(thumbIP.y - thumbCMC.y, 2)
+    );
+    
+    // 4. Combinación de verificaciones
+    const isThumbUp = (isThumbAboveIP || isThumbExtended) && 
+                      (distanceTipToCMC > distanceIPToCMC * 0.8);
+    
+    if (isThumbUp) {
         count++;
     }
     
