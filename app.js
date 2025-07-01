@@ -273,56 +273,44 @@ function drawHandLandmarks(landmarks) {
     });
 }
 
-// 6. ALGORITMO DE DETECCIÓN DE DEDOS MEJORADO (PRECISO PARA PULGARES)
+// 6. ALGORITMO DE DETECCIÓN DE DEDOS MEJORADO (PULGAR SIMPLIFICADO)
 function countFingers(landmarks, handedness) {
     // Definición de puntos clave
-    const fingerTips = [4, 8, 12, 16, 20]; // Pulgar, índice, medio, anular, meñique
-    const fingerJoints = [3, 6, 10, 14, 18]; // Articulaciones base (IP para pulgar, PIP para otros)
+    const fingerTips = [4, 8, 12, 16, 20];
+    const fingerJoints = [3, 6, 10, 14, 18];
     
     let count = 0;
     
-    // Detección para dedos largos (índice a meñique)
+    // Detección para dedos largos (índice a meñique) - Mantenemos esta parte
     for (let i = 1; i <= 4; i++) {
         const tip = landmarks[fingerTips[i]];
         const joint = landmarks[fingerJoints[i]];
         
-        // Verificar si la punta del dedo está sobre la articulación
         if (tip.y < joint.y) {
             count++;
         }
     }
     
-    // DETECCIÓN DE PULGAR MEJORADA (PRECISA PARA PUÑO CERRADO)
-    const thumbTip = landmarks[4];
-    const thumbIP = landmarks[3]; // Articulación interfalángica
-    const thumbMCP = landmarks[2]; // Articulación metacarpofalángica
-    const thumbCMC = landmarks[1]; // Articulación carpometacarpiana
+    // DETECCIÓN DE PULGAR SIMPLIFICADA (SOLO EJE X)
+    const thumbTip = landmarks[4];     // Falange distal (punta)
+    const thumbProximal = landmarks[3];// Falange proximal
     
-    // 1. Verificación de la posición vertical
-    const isThumbAboveIP = thumbTip.y < thumbIP.y;
+    // Calcular distancia horizontal relativa
+    const xDistance = Math.abs(thumbTip.x - thumbProximal.x);
+    const thumbLength = Math.abs(thumbTip.x - landmarks[2].x); // Longitud aproximada del pulgar
     
-    // 2. Verificación de la posición horizontal
-    const isThumbExtended = handedness === 'Right' 
-        ? thumbTip.x < thumbMCP.x 
-        : thumbTip.x > thumbMCP.x;
+    // Umbral para considerar dedo extendido (40% de la longitud del pulgar)
+    const extensionThreshold = thumbLength * 0.4;
     
-    // 3. Verificación de la distancia desde la base
-    const distanceTipToCMC = Math.sqrt(
-        Math.pow(thumbTip.x - thumbCMC.x, 2) + 
-        Math.pow(thumbTip.y - thumbCMC.y, 2)
-    );
+    // Determinar si está extendido basado en distancia horizontal
+    const isThumbExtended = xDistance > extensionThreshold;
     
-    const distanceIPToCMC = Math.sqrt(
-        Math.pow(thumbIP.x - thumbCMC.x, 2) + 
-        Math.pow(thumbIP.y - thumbCMC.y, 2)
-    );
-    
-    // 4. Combinación de verificaciones
-    const isThumbUp = (isThumbAboveIP || isThumbExtended) && 
-                      (distanceTipToCMC > distanceIPToCMC * 0.8);
-    
-    if (isThumbUp) {
-        count++;
+    // Considerar dirección basada en lateralidad
+    if (isThumbExtended) {
+        if ((handedness === 'Right' && thumbTip.x < thumbProximal.x) ||
+            (handedness === 'Left' && thumbTip.x > thumbProximal.x)) {
+            count++;
+        }
     }
     
     return count;
