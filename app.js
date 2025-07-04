@@ -7,6 +7,8 @@ const fingersResult = document.getElementById('fingers-result');
 const traitsResult = document.getElementById('traits-result');
 const canvasHands = document.getElementById('canvas-hands');
 const ctxHands = canvasHands.getContext('2d');
+const canvasFace = document.getElementById('canvas-face');
+const ctxFace = canvasFace.getContext('2d');
 
 // Variables de estado
 let handTracker = null;
@@ -53,6 +55,8 @@ btnStart.addEventListener('click', async () => {
             const onLoaded = () => {
                 canvasHands.width = video.videoWidth;
                 canvasHands.height = video.videoHeight;
+                canvasFace.width = video.videoWidth;
+                canvasFace.height = video.videoHeight;
                 resolve();
             };
             
@@ -117,11 +121,19 @@ async function startDetection() {
     try {
         // Cargar modelos FaceAPI
         await Promise.all([
+            faceapi.nets.faceLandmark68TinyNet.loadFromUri('./models'),
             faceapi.nets.tinyFaceDetector.loadFromUri('./models'),
             faceapi.nets.faceExpressionNet.loadFromUri('./models'),
             faceapi.nets.ageGenderNet.loadFromUri('./models')
         ]);
-        
+
+        console.log('Modelos cargados:', {
+            landmarks: faceapi.nets.faceLandmark68TinyNet.isLoaded,
+            detector: faceapi.nets.tinyFaceDetector.isLoaded,
+            expressions: faceapi.nets.faceExpressionNet.isLoaded,
+            ageGender: faceapi.nets.ageGenderNet.isLoaded
+        });
+
         // Configurar MediaPipe Hands
         handTracker = new window.Hands({
             locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
@@ -136,7 +148,7 @@ async function startDetection() {
         handTracker.onResults(processHands);
         
         // Iniciar detecciones periódicas
-        faceDetectionInterval = setInterval(detectFace, 800);
+        faceDetectionInterval = setInterval(detectFace, 300);
         handDetectionInterval = setInterval(() => {
             if (video.readyState >= 2) {
                 try {
@@ -145,7 +157,7 @@ async function startDetection() {
                     console.warn('Error enviando a MediaPipe:', sendError);
                 }
             }
-        }, 300);
+        }, 150);
         
         btnDetect.disabled = false;
         console.log('Detección iniciada');
@@ -169,6 +181,7 @@ function stopDetection() {
     clearInterval(handDetectionInterval);
     
     ctxHands.clearRect( 0, 0, canvasHands.width, canvasHands.height);
+    ctxFace.clearRect(0, 0, canvasFace.width, canvasFace.height);
     emotionResult.textContent = '-';
     fingersResult.textContent = '-';
     traitsResult.textContent = '-';
@@ -177,7 +190,7 @@ function stopDetection() {
     console.log('Detección detenida');
 }
 
-// 3. Detección facial
+// 3. Detección facial CORREGIDA
 async function detectFace() {
     if (!detectionActive || !video.videoWidth) return;
     
@@ -185,9 +198,36 @@ async function detectFace() {
         const detection = await faceapi.detectSingleFace(
             video, 
             new faceapi.TinyFaceDetectorOptions()
-        ).withFaceExpressions().withAgeAndGender();
+        )
+        .withFaceLandmarks('tiny') 
+        .withFaceExpressions()
+        .withAgeAndGender();
+        
+        // Limpiar canvas facial
+        ctxFace.clearRect(0, 0, canvasFace.width, canvasFace.height);
         
         if (detection) {
+            // Dibujar caja del rostro
+            const { x, y, width, height } = detection.detection.box;
+            ctxFace.strokeStyle = '#00FF00';
+            ctxFace.lineWidth = 3;
+            ctxFace.strokeRect(x, y, width, height);
+            
+            // Dibujar landmarks si están disponibles
+            if (detection.landmarks) {
+                try {
+                    drawFaceLandmarks(detection.landmarks);
+                } catch (landmarkError) {
+                    console.error('Error dibujando landmarks:', landmarkError);
+                }
+            }
+
+            // Dibujar etiqueta con info
+            ctxFace.fillStyle = '#00FF00';
+            ctxFace.font = '16px Arial';
+            ctxFace.fillText(`Rostro detectado`, x, y - 10);
+            
+            // Actualizar resultados
             const expressions = detection.expressions;
             const dominantEmotion = Object.keys(expressions).reduce(
                 (a, b) => expressions[a] > expressions[b] ? a : b
@@ -195,10 +235,56 @@ async function detectFace() {
             
             emotionResult.textContent = `${emotionTranslations[dominantEmotion] || dominantEmotion} (${Math.round(expressions[dominantEmotion] * 100)}%)`;
             traitsResult.textContent = `${Math.round(detection.age)} años, ${detection.gender}`;
+        } else {
+            emotionResult.textContent = 'No detectado';
+            traitsResult.textContent = 'No detectado';
         }
     } catch (error) {
-        console.warn('Error en detección facial:', error);
+        console.error('Error en detección facial:', error);
+        emotionResult.textContent = 'Error';
+        traitsResult.textContent = 'Error';
     }
+}
+
+// Nueva función para dibujar puntos faciales
+function drawFaceLandmarks(landmarks) {
+    ctxFace.fillStyle = '#FF0000';
+    ctxFace.strokeStyle = '#00FFFF';
+    ctxFace.lineWidth = 1;
+    
+    // Dibujar puntos
+    landmarks.positions.forEach(point => {
+        ctxFace.beginPath();
+        ctxFace.arc(point.x, point.y, 2, 0, Math.PI * 2); // Radio aumentado
+        ctxFace.fill();
+    });
+    
+    // Dibujar conexiones usando el método específico para tiny
+    const jawline = landmarks.getJawOutline();
+    const leftEye = landmarks.getLeftEye();
+    const rightEye = landmarks.getRightEye();
+    const leftEyeBbrow = landmarks.getLeftEyeBrow();
+    const rightEyeBbrow = landmarks.getRightEyeBrow();
+    const nose = landmarks.getNose();
+    const mouth = landmarks.getMouth();
+    
+    // Dibujar todas las partes
+    [jawline, leftEye, rightEye, leftEyeBbrow, rightEyeBbrow, nose, mouth].forEach(points => {
+        drawLandmarkCurve(points);
+    });
+}
+
+function drawLandmarkCurve(points) {
+    if (points.length < 2) return;
+    
+    ctxFace.beginPath();
+    ctxFace.moveTo(points[0].x, points[0].y);
+    
+    for (let i = 1; i < points.length; i++) {
+        ctxFace.lineTo(points[i].x, points[i].y);
+    }
+    
+    ctxFace.stroke();
 }
 
 // 4. Procesamiento de manos
