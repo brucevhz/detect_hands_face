@@ -209,7 +209,7 @@ async function detectFace() {
         if (detection) {
             // Dibujar caja del rostro
             const { x, y, width, height } = detection.detection.box;
-            ctxFace.strokeStyle = '#00FF00';
+            ctxFace.strokeStyle = '#f08b36';
             ctxFace.lineWidth = 3;
             ctxFace.strokeRect(x, y, width, height);
             
@@ -221,11 +221,6 @@ async function detectFace() {
                     console.error('Error dibujando landmarks:', landmarkError);
                 }
             }
-
-            // Dibujar etiqueta con info
-            ctxFace.fillStyle = '#00FF00';
-            ctxFace.font = '16px Arial';
-            ctxFace.fillText(`Rostro detectado`, x, y - 10);
             
             // Actualizar resultados
             const expressions = detection.expressions;
@@ -248,8 +243,8 @@ async function detectFace() {
 
 // Nueva función para dibujar puntos faciales
 function drawFaceLandmarks(landmarks) {
-    ctxFace.fillStyle = '#FF0000';
-    ctxFace.strokeStyle = '#00FFFF';
+    ctxFace.fillStyle = '#FFFFFF';
+    ctxFace.strokeStyle = '#1d428a';
     ctxFace.lineWidth = 1;
     
     // Dibujar puntos
@@ -299,12 +294,21 @@ function processHands(results) {
         results.multiHandLandmarks.forEach((landmarks, i) => {
             drawHandLandmarks(landmarks);
             
-            const handedness = results.multiHandedness[i]?.label || 'Unknown';
-            const handType = handedness === 'Right' ? 'Derecha' : 'Izquierda';
+            let handedness = results.multiHandedness[i]?.label || 'Unknown';
             
-            // Pasar la información de lateralidad al contador de dedos
+            // SOLO invertimos las etiquetas para mostrar al usuario
+            let displayHandType;
+            if (handedness === 'Right') {
+                displayHandType = 'Izquierda'; // Mostramos como izquierda
+            } else if (handedness === 'Left') {
+                displayHandType = 'Derecha';    // Mostramos como derecha
+            } else {
+                displayHandType = 'Desconocida';
+            }
+            
+            // Usamos la handedness ORIGINAL para el conteo de dedos
             const fingersUp = countFingers(landmarks, handedness);
-            fingersCounts.push(`${fingersUp} (${handType})`);
+            fingersCounts.push(`${fingersUp} (${displayHandType})`);
         });
         
         fingersResult.textContent = fingersCounts.join(' y ');
@@ -326,8 +330,8 @@ function drawHandLandmarks(landmarks) {
     ];
 
     // Dibujar conexiones
-    ctxHands.strokeStyle = '#00FF00';
-    ctxHands.lineWidth = 2;
+    ctxHands.strokeStyle = '#1d428a';
+    ctxHands.lineWidth = 3;
     ctxHands.beginPath();
 
     HAND_CONNECTIONS.forEach(([start, end]) => {
@@ -347,7 +351,7 @@ function drawHandLandmarks(landmarks) {
     ctxHands.stroke();
 
     // Dibujar puntos
-    ctxHands.fillStyle = '#FF0000';
+    ctxHands.fillStyle = '#FFFFFF';
     landmarks.forEach(landmark => {
         ctxHands.beginPath();
         ctxHands.arc(
