@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Detector de Emociones y Dedos</title>
-    <link rel="icon" href="data:,"> <!-- Solución para favicon -->
+    <link rel="icon" href="data:,">
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -12,9 +12,9 @@
         <h1>Detección en Tiempo Real</h1>
         
         <div class="video-container">
-            <video id="video" autoplay playsinline muted width="640" height="480"></video>
-            <canvas id="canvas-face" width="640" height="480"></canvas>
-            <canvas id="canvas-hands" width="640" height="480"></canvas>
+            <video id="video" autoplay playsinline></video>
+            <canvas id="canvas-face"></canvas>
+            <canvas id="canvas-hands"></canvas>
         </div>
         
         <div class="controls">
@@ -38,11 +38,8 @@
         </div>
     </div>
 
-    <!-- Scripts desde CDN -->
     <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script> <!-- ¡IMPORTANTE! -->
-    
-    <!-- Nuestro script -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
     <script src="app.js"></script>
 </body>
 </html>
