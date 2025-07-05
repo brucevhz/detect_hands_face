@@ -17,6 +17,15 @@ let cameraActive = false;
 let faceDetectionInterval = null;
 let handDetectionInterval = null;
 let stream = null;
+let handFingers = { left: 0, right: 0 };
+
+// Variables para conexión serial
+let serialPort = null;
+let writer = null;
+let isArduinoRequested = false;
+
+// Escala del canvas
+window.canvasScale = { x: 1, y: 1 };
 
 // Traducciones de emociones
 const emotionTranslations = {
@@ -118,6 +127,75 @@ btnDetect.addEventListener('click', async () => {
     }
 });
 
+// Botón para iniciar conexión con Arduino
+document.getElementById('btn-connect').addEventListener('click', () => {
+    isArduinoRequested = true;
+    alert('Cuando se detecte un rostro, se te pedirá seleccionar el puerto Arduino');
+});
+
+// Función para conectar con Arduino
+async function connectToArduino() {
+    try {
+        if (!navigator.serial) {
+            throw new Error('Web Serial API no soportada en este navegador');
+        }
+        
+        serialPort = await navigator.serial.requestPort();
+        await serialPort.open({ baudRate: 9600 });
+        writer = serialPort.writable.getWriter();
+        
+        console.log('Conectado a Arduino');
+        return true;
+    } catch (error) {
+        console.error('Error al conectar con Arduino:', error);
+        
+        // Informar al usuario
+        if (error.message.includes('Web Serial API')) {
+            alert('Tu navegador no soporta conexión serial. Usa Chrome o Edge.');
+        } else {
+            alert('Selecciona el puerto correcto en el selector');
+        }
+        
+        return false;
+    }
+}
+
+// Variables para manejar el envío de datos
+let lastSendTime = 0;
+const sendInterval = 500;
+let isConnecting = false;
+
+// Función para enviar datos a Arduino
+async function sendToArduino(data) {
+    // 1. Verificar si el usuario quiere conectar Arduino
+    if (!isArduinoRequested) return;
+    
+    // 2. Controlar frecuencia de envío
+    const now = Date.now();
+    if (now - lastSendTime < sendInterval) return;
+    lastSendTime = now;
+    
+    // 3. Conectar si es necesario
+    if (!writer) {
+        const success = await connectToArduino();
+        if (!success) {
+            isArduinoRequested = false; // Dejar de intentar si falla
+            return;
+        }
+    }
+    
+    // 4. Enviar datos
+    try {
+        const encoder = new TextEncoder();
+        const output = `${data.emocion}\n${data.edad}\n${data.genero}\n${data.mano_izquierda}\n${data.mano_derecha}\n`;
+        await writer.write(encoder.encode(output));
+    } catch (error) {
+        console.error('Error enviando datos a Arduino:', error);
+        writer = null;
+        serialPort = null;
+    }
+}
+
 // Detener detección
 function stopDetection() {
     if (!detectionActive) return;
@@ -132,23 +210,71 @@ function stopDetection() {
     emotionResult.textContent = '-';
     fingersResult.textContent = '-';
     traitsResult.textContent = '-';
+    window.canvasScale = { x: 1, y: 1 };
 }
 
 // Ajustar dimensiones
 function handleResize() {
-    if (video.videoWidth && video.videoHeight) {
-        const { videoWidth, videoHeight } = video;
+    const container = document.querySelector('.video-container');
+    if (!container || !video.videoWidth) return;
+    
+    const { videoWidth, videoHeight } = video;
+    
+    // Mantener relación de aspecto
+    container.style.aspectRatio = `${videoWidth}/${videoHeight}`;
+    
+    // Calcular factor de escala solo para rostro (manos ya están normalizadas)
+    const scaleX = container.clientWidth / videoWidth;
+    const scaleY = container.clientHeight / videoHeight;
+    
+    window.canvasScale = { x: scaleX, y: scaleY };
+    
+    [canvasHands, canvasFace].forEach(canvas => {
+        canvas.width = container.clientWidth;
+        canvas.height = container.clientHeight;
+    });
+    
+    if (detectionActive) {
+        ctxHands.clearRect(0, 0, canvasHands.width, canvasHands.height);
+        ctxFace.clearRect(0, 0, canvasFace.width, canvasFace.height);
         
-        document.querySelector('.video-container').style.aspectRatio = `${videoWidth}/${videoHeight}`;
-        [canvasHands, canvasFace].forEach(canvas => {
-            canvas.width = videoWidth;
-            canvas.height = videoHeight;
-        });
+        // Redibujar inmediatamente
+        setTimeout(() => {
+            if (handDetectionInterval) handTracker.send({ image: video });
+            detectFace();
+        }, 50);
     }
 }
 
+handleResize();
+
 window.addEventListener('resize', handleResize);
 window.addEventListener('orientationchange', handleResize);
+document.addEventListener('fullscreenchange', handleResize);
+document.addEventListener('webkitfullscreenchange', handleResize);
+document.addEventListener('mozfullscreenchange', handleResize);
+
+// Evento de carga del video
+const onLoaded = () => {
+    const videoWidth = video.videoWidth;
+    const videoHeight = video.videoHeight;
+    
+    document.querySelector('.video-container').style.aspectRatio = `${videoWidth}/${videoHeight}`;
+    handleResize(); // Forzar redimensionamiento inicial
+    resolve();
+};
+
+// Manejo de pantalla completa
+function toggleFullscreen() {
+  const container = document.querySelector('.video-container');
+  if (!document.fullscreenElement) {
+    container.requestFullscreen().catch(err => {
+      console.error('Error al entrar en pantalla completa:', err);
+    });
+  } else {
+    document.exitFullscreen();
+  }
+}
 
 // Iniciar detección
 async function startDetection() {
@@ -214,10 +340,12 @@ async function detectFace() {
         ctxFace.clearRect(0, 0, canvasFace.width, canvasFace.height);
         
         if (detection) {
+            const scale = window.canvasScale || { x: 1, y: 1 };
             const { x, y, width, height } = detection.detection.box;
+
             ctxFace.strokeStyle = '#f08b36';
             ctxFace.lineWidth = 3;
-            ctxFace.strokeRect(x, y, width, height);
+            ctxFace.strokeRect(x * scale.x, y * scale.y, width * scale.x, height * scale.y);
             
             if (detection.landmarks) {
                 try {
@@ -232,6 +360,14 @@ async function detectFace() {
             
             emotionResult.textContent = `${emotionTranslations[dominantEmotion] || dominantEmotion} (${Math.round(expressions[dominantEmotion] * 100)}%)`;
             traitsResult.textContent = `${Math.round(detection.age)} años, ${detection.gender}`;
+            const arduinoData = {
+                emocion: emotionTranslations[dominantEmotion] || dominantEmotion,
+                edad: Math.round(detection.age),
+                genero: detection.gender,
+                mano_izquierda: handFingers.left,
+                mano_derecha: handFingers.right
+            };
+            sendToArduino(arduinoData);
         } else {
             emotionResult.textContent = 'No detectado';
             traitsResult.textContent = 'No detectado';
@@ -245,13 +381,15 @@ async function detectFace() {
 
 // Dibujar puntos faciales
 function drawFaceLandmarks(landmarks) {
+    const scale = window.canvasScale || { x: 1, y: 1 };
+
     ctxFace.fillStyle = '#FFFFFF';
     ctxFace.strokeStyle = '#1d428a';
     ctxFace.lineWidth = 1;
     
     landmarks.positions.forEach(point => {
         ctxFace.beginPath();
-        ctxFace.arc(point.x, point.y, 2, 0, Math.PI * 2);
+        ctxFace.arc(point.x * scale.x, point.y * scale.y, 2, 0, Math.PI * 2);
         ctxFace.fill();
     });
     
@@ -265,16 +403,16 @@ function drawFaceLandmarks(landmarks) {
         landmarks.getMouth()
     ];
     
-    parts.forEach(points => drawLandmarkCurve(points));
+    parts.forEach(points => drawLandmarkCurve(points, scale));
 }
 
-function drawLandmarkCurve(points) {
+function drawLandmarkCurve(points, scale) {
     if (points.length < 2) return;
     
     ctxFace.beginPath();
-    ctxFace.moveTo(points[0].x, points[0].y);
+    ctxFace.moveTo(points[0].x * scale.x, points[0].y * scale.y);
     for (let i = 1; i < points.length; i++) {
-        ctxFace.lineTo(points[i].x, points[i].y);
+        ctxFace.lineTo(points[i].x * scale.x, points[i].y * scale.y);
     }
     ctxFace.stroke();
 }
@@ -284,6 +422,10 @@ function processHands(results) {
     if (!detectionActive) return;
     
     ctxHands.clearRect(0, 0, canvasHands.width, canvasHands.height);
+
+    // Reiniciamos los contadores
+    handFingers.left = 0;
+    handFingers.right = 0;
     
     if (results.multiHandLandmarks?.length > 0) {
         const fingersCounts = [];
@@ -297,6 +439,13 @@ function processHands(results) {
             
             const fingersUp = countFingers(landmarks, handedness);
             fingersCounts.push(`${fingersUp} (${displayHandType})`);
+            
+            // Actualizamos las variables GLOBALES
+            if (handedness === 'Left') {
+                handFingers.left = fingersUp;
+            } else if (handedness === 'Right') {
+                handFingers.right = fingersUp;
+            }
         });
         
         fingersResult.textContent = fingersCounts.join(' y ');
@@ -322,15 +471,19 @@ function drawHandLandmarks(landmarks) {
     HAND_CONNECTIONS.forEach(([start, end]) => {
         const startPoint = landmarks[start];
         const endPoint = landmarks[end];
-        ctxHands.moveTo(startPoint.x * canvasHands.width, startPoint.y * canvasHands.height);
-        ctxHands.lineTo(endPoint.x * canvasHands.width, endPoint.y * canvasHands.height);
+        ctxHands.moveTo(startPoint.x * canvasHands.width, 
+                        startPoint.y * canvasHands.height);
+        ctxHands.lineTo(endPoint.x * canvasHands.width, 
+                       endPoint.y * canvasHands.height);
     });
     ctxHands.stroke();
 
     ctxHands.fillStyle = '#FFFFFF';
     landmarks.forEach(landmark => {
         ctxHands.beginPath();
-        ctxHands.arc(landmark.x * canvasHands.width, landmark.y * canvasHands.height, 4, 0, Math.PI * 2);
+        ctxHands.arc(landmark.x * canvasHands.width, 
+                     landmark.y * canvasHands.height, 
+                     4, 0, Math.PI * 2);
         ctxHands.fill();
     });
 }
@@ -363,15 +516,23 @@ function countFingers(landmarks, handedness) {
     return count;
 }
 
+
 // Manejo de eventos de cierre
 window.addEventListener('beforeunload', () => {
     stopDetection();
     stream?.getTracks().forEach(track => track.stop());
+    
+    // Cerrar conexión serial
+    if (writer) {
+        writer.releaseLock();
+    }
+    if (serialPort) {
+        serialPort.close();
+    }
 });
 
-window.addEventListener('resize', () => {
-    if (video.videoWidth) {
-        canvasHands.width = video.videoWidth;
-        canvasHands.height = video.videoHeight;
-    }
+// Manejo de pantalla completa
+document.addEventListener('DOMContentLoaded', () => {
+    const btnFullscreen = document.getElementById('btn-fullscreen');
+    btnFullscreen.addEventListener('click', toggleFullscreen);
 });
